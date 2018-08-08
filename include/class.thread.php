@@ -602,6 +602,7 @@ implements TemplateVariable {
     const PERM_EDIT     = 'thread.edit';
 
     var $_headers;
+    var $_body;
     var $_thread;
     var $_actions;
     var $is_autoreply;
@@ -677,9 +678,21 @@ implements TemplateVariable {
     }
 
     function getBody() {
-        return ThreadEntryBody::fromFormattedText($this->body, $this->format,
-            array('balanced' => $this->hasFlag(self::FLAG_BALANCED))
-        );
+
+        if (!isset($this->_body)) {
+            $body = $this->body;
+            if ($body == null && $this->getNumAttachments()) {
+                foreach ($this->attachments as $a)
+                    if ($a->inline && ($f=$a->getFile()))
+                        $body .= $f->getData();
+            }
+
+            $this->_body = ThreadEntryBody::fromFormattedText($body, $this->format,
+                array('balanced' => $this->hasFlag(self::FLAG_BALANCED))
+            );
+        }
+
+        return $this->_body;
     }
 
     function setBody($body) {
@@ -1410,13 +1423,35 @@ implements TemplateVariable {
 
         // Set body here after it was rewritten to capture the stored file
         // keys (above)
-        $entry->body = $body;
 
-        if (!$entry->save())
+        // Store body as an attachment if bigger than allowed packet size
+        if (mb_strlen($body) >= 65000) { // 65,535 chars in text field.
+             $entry->body = NULL;
+             $file = array(
+                     'type' => 'text/html',
+                     'name' => md5($body).'.txt',
+                     'data' => $body,
+                     );
+
+             if (($AF = AttachmentFile::create($file))) {
+                 $attached_files[$file['key']] = array(
+                         'id' => $AF->getId(),
+                         'inline' => true,
+                         'file' => $AF);
+             } else {
+                 $entry->body = $body;
+             }
+        } else {
+            $entry->body = $body;
+
+        }
+
+        if (!$entry->save(true))
             return false;
 
         // Associate the attached files with this new entry
         $entry->createAttachments($attached_files);
+
 
         // Save mail message id, if available
         $entry->saveEmailInfo($vars);
@@ -1770,8 +1805,8 @@ class ThreadEvents extends InstrumentedList {
             }
             // XXX: Use $user here
             elseif ($thisclient) {
-                if ($thisclient->hasAccount)
-                    $username = $thisclient->getAccount()->getUserName();
+                if ($thisclient->hasAccount())
+                    $username = $thisclient->getFullName();
                 if (!$username)
                     $username = $thisclient->getEmail();
             }
@@ -1922,8 +1957,9 @@ class EditEvent extends ThreadEvent {
                 $fields[$F->id] = $F;
             }
             foreach ($data['fields'] as $id=>$f) {
-                $field = $fields[$id];
-                if ($mode == self::MODE_CLIENT && !$field->isVisibleToUsers())
+                if (!($field = $fields[$id]))
+                   continue;
+                if ($mode == self::MODE_CLIENT &&  !$field->isVisibleToUsers())
                     continue;
                 list($old, $new) = $f;
                 $impl = $field->getImpl($field);
@@ -2170,7 +2206,7 @@ class TextThreadEntryBody extends ThreadEntryBody {
     }
 
     function getClean() {
-        return  Format::stripEmptyLines(parent::getClean());
+        return Format::htmlchars(Format::html_balance(Format::stripEmptyLines(parent::getClean())));
     }
 
     function prepend($what) {
