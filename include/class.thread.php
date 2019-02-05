@@ -231,6 +231,7 @@ class Thread extends VerySimpleModel {
 
     // Render thread
     function render($type=false, $options=array()) {
+        global $cfg;
 
         $mode = $options['mode'] ?: self::MODE_STAFF;
 
@@ -1308,6 +1309,16 @@ implements TemplateVariable {
 
         if (!($body = $vars['body']->getClean()))
             $body = '-'; //Special tag used to signify empty message as stored.
+        
+        $time_spent = $vars['time_spent'];
+        if ($time_spent && is_object($time_spent))
+            $time_spent = (float) $time_spent;
+        $time_type = $vars['time_type'];
+        if ($time_type && is_object($time_type))
+            $time_type = (int) $time_type;
+        $time_bill = $vars['time_bill'];
+        if ($time_bill && is_object($time_bill))
+            $time_bill = (int) $time_bill;
 
         $poster = $vars['poster'];
         if ($poster && is_object($poster))
@@ -1322,6 +1333,9 @@ implements TemplateVariable {
             'staff_id' => $vars['staffId'],
             'user_id' => $vars['userId'],
             'poster' => $poster,
+            'time_spent' => $time_spent,
+			'time_type' => $time_type,
+			'time_bill' => $time_bill,
             'source' => $vars['source'],
             'flags' => $vars['flags'] ?: 0,
         ));
@@ -1943,8 +1957,9 @@ class EditEvent extends ThreadEvent {
                 $fields[$F->id] = $F;
             }
             foreach ($data['fields'] as $id=>$f) {
-                $field = $fields[$id];
-                if ($mode == self::MODE_CLIENT && !$field->isVisibleToUsers())
+                if (!($field = $fields[$id]))
+                   continue;
+                if ($mode == self::MODE_CLIENT &&  !$field->isVisibleToUsers())
                     continue;
                 list($old, $new) = $f;
                 $impl = $field->getImpl($field);
@@ -2191,7 +2206,7 @@ class TextThreadEntryBody extends ThreadEntryBody {
     }
 
     function getClean() {
-        return  Format::htmlchars(Format::stripEmptyLines(parent::getClean()), true);
+        return Format::htmlchars(Format::html_balance(Format::stripEmptyLines(parent::getClean())));
     }
 
     function prepend($what) {
